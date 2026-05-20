@@ -7,6 +7,16 @@ const { PDFDocument } = require("pdf-lib");
 
 const app = express();
 
+// Ensure required directories exist before use
+function ensureDirectory(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+ensureDirectory(path.join(__dirname, 'uploads'));
+ensureDirectory(path.join(__dirname, 'output'));
+
 app.use(express.static("public"));
 // Serve output files for download
 app.use('/output', express.static('output'));
