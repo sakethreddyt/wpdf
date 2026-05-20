@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DOCX to Merged PDF</title>
+
+  <style>
+    body { font-family: Arial; padding: 40px; background: #f5f5f5; }
+    .box { background: white; padding: 30px; border-radius: 10px; max-width: 600px; margin: auto; }
+    button { padding: 12px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    #status { margin-top: 20px; }
+  </style>
+</head>
+<body>
+<marquee direction="right" scrollamount="10" behavior="alternate" bgcolor="blue"><h1>Saketh word Converter </h1></marquee>
+<div class="box">
+  <h2>Upload Word Files</h2>
+
+  <input type="file" id="files" multiple accept=".doc,.docx">
+
+  <br><br>
+
+  <button onclick="uploadFiles()">Convert & Merge</button>
+
+  <div id="status"></div>
+</div>
+
+<div class="box" style="max-width:600px;margin:20px auto;">
+  <h3>Progress</h3>
+  <div style="background:#eee;border-radius:6px;overflow:hidden;height:22px;">
+    <div id="progressBar" style="height:22px;width:0%;background:#28a745;color:white;text-align:center;line-height:22px;">0%</div>
+  </div>
+  <div id="progressMessage" style="margin-top:8px"></div>
+  <div id="downloadLink" style="margin-top:12px"></div>
+</div>
+
+<script>
+async function uploadFiles() {
+  const files = document.getElementById("files").files;
+
+  if (!files.length) {
+    alert("Select files");
+    return;
+  }
+
+  const formData = new FormData();
+
+  for (const file of files) {
+    formData.append("files", file);
+  }
+
+  const statusDiv = document.getElementById("status");
+  statusDiv.innerText = "Uploading...";
+
+  // Use XHR so we can show upload progress immediately
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/convert');
+
+  // We'll reserve 30% of the progress bar for upload, and 70% for server conversion/merge
+  const UPLOAD_WEIGHT = 30; // percent
+  const SERVER_WEIGHT = 70; // percent
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      const uploadPercent = Math.round((e.loaded / e.total) * 100);
+      const overall = Math.round((uploadPercent / 100) * UPLOAD_WEIGHT);
+      const progressBar = document.getElementById('progressBar');
+      progressBar.style.width = overall + '%';
+      progressBar.innerText = overall + '%';
+      document.getElementById('progressMessage').innerText = `Uploading: ${uploadPercent}%`;
+    }
+  };
+
+  xhr.onload = async function() {
+    if (xhr.status < 200 || xhr.status >= 300) {
+      let msg = 'Upload failed';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {}
+      alert(msg);
+      statusDiv.innerText = 'Upload failed';
+      return;
+    }
+    // upload finished — server returned jobId
+    statusDiv.innerText = 'Upload complete. Starting conversion...';
+    let resp = {};
+    try { resp = JSON.parse(xhr.responseText); } catch (e) { alert('Invalid server response'); return; }
+    const jobId = resp.jobId;
+
+    // The XHR `onload` handler receives `xhr.responseText` which we parsed into
+    // `resp` above. There is no `response` object here (that was a bug).
+    // Validate the parsed response and show a helpful error if jobId is missing.
+    if (!jobId) {
+      const err = resp && resp.error ? resp.error : 'Invalid server response';
+      alert('Upload failed: ' + err);
+      statusDiv.innerText = 'Upload failed';
+      return;
+    }
+
+    document.getElementById('status').innerText = `Job started: ${jobId}`;
+
+    // poll progress
+    const progressBar = document.getElementById('progressBar');
+    const progressMessage = document.getElementById('progressMessage');
+    const downloadDiv = document.getElementById('downloadLink');
+
+    const poll = setInterval(async () => {
+      try {
+        const s = await fetch(`/status/${jobId}`);
+        if (!s.ok) throw new Error('Status fetch failed');
+        const js = await s.json();
+
+        // server reports totalProgress (0-99) where upload is assumed already counted as 30
+        const serverTotal = js.totalProgress !== undefined ? js.totalProgress : (js.progress || 0);
+        // Map serverTotal (which includes upload weight) to overall percent
+        const overall = Math.max(0, Math.min(100, serverTotal));
+
+        progressBar.style.width = overall + '%';
+        progressBar.innerText = overall + '%';
+
+        // Show more detailed phase info if available
+        if (js.phase) {
+          progressMessage.innerText = `${js.phase} ${js.phaseProgress ? '(' + js.phaseProgress + '%)' : ''} - ${js.message || ''}`;
+        } else {
+          progressMessage.innerText = js.message || '';
+        }
+
+        if (js.status === 'done') {
+          clearInterval(poll);
+          progressBar.style.width = '100%';
+          progressBar.innerText = '100%';
+          progressMessage.innerText = 'Completed';
+          downloadDiv.innerHTML = `<a href="${js.result}" target="_blank">Download merged PDF</a>`;
+        } else if (js.status === 'error') {
+          clearInterval(poll);
+          progressMessage.innerText = 'Error: ' + (js.error || js.message || 'Unknown');
+        }
+      } catch (e) {
+        console.error(e);
+        clearInterval(poll);
+        progressMessage.innerText = 'Error polling status';
+      }
+    }, 1000);
+    };
+
+    xhr.onerror = function() {
+      alert('Network error during upload');
+      statusDiv.innerText = 'Upload error';
+    };
+
+    xhr.send(formData);
+}
+</script>
+
+</body>
+</html>

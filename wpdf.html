@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Word to PDF Merger</title>
+
+  <!-- Mammoth.js for DOCX -> HTML -->
+  <script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+
+  <!-- html2pdf.js for HTML -> PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <!-- PDF-lib for merging PDFs -->
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    .container {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 700px;
+      margin: auto;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+
+    input[type="file"] {
+      margin: 15px 0;
+    }
+
+    button {
+      padding: 12px 20px;
+      border: none;
+      background: #007bff;
+      color: white;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    #status {
+      margin-top: 20px;
+      white-space: pre-line;
+      color: green;
+    }
+
+    .hidden-render {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 800px;
+      background: white;
+      padding: 30px;
+      /* Keep the area visually hidden but still renderable by html2canvas/html2pdf */
+      opacity: 0;
+      pointer-events: none;
+      z-index: -1;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Word Files to Merged PDF</h1>
+
+  <input type="file" id="wordFiles" multiple accept=".docx" />
+
+  <br/>
+
+  <button onclick="processFiles()">Convert & Merge PDFs</button>
+
+  <div id="status"></div>
+</div>
+
+<div id="renderArea" class="hidden-render"></div>
+
+<script>
+  async function processFiles() {
+    const input = document.getElementById("wordFiles");
+    const files = input.files;
+    const status = document.getElementById("status");
+
+    if (!files.length) {
+      alert("Please select Word files.");
+      return;
+    }
+
+    status.innerText = "Processing...";
+
+    const mergedPdf = await PDFLib.PDFDocument.create();
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      status.innerText += `\nConverting: ${file.name}`;
+
+      try {
+        // Read DOCX file
+        const arrayBuffer = await file.arrayBuffer();
+
+        // Convert DOCX to HTML
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+
+  // Create temporary HTML container
+  const renderArea = document.getElementById("renderArea");
+  console.log('mammoth converted html length:', result.value ? result.value.length : 0);
+  renderArea.innerHTML = result.value;
+
+        // Wait for images in the rendered HTML to finish loading so
+        // html2canvas/html2pdf captures them instead of blank spaces.
+        const imgs = Array.from(renderArea.querySelectorAll('img'));
+        if (imgs.length) {
+          await Promise.race([
+            Promise.all(
+              imgs.map((img) =>
+                new Promise((resolve) => {
+                  if (img.complete) return resolve();
+                  img.onload = img.onerror = () => resolve();
+                })
+              )
+            ),
+            // Fallback in case image load hangs
+            new Promise((resolve) => setTimeout(resolve, 1500))
+          ]);
+        } else {
+          // Minimal pause for fonts/CSS to apply when there are no images
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        // Convert HTML to PDF blob
+        const pdfBlob = await html2pdf()
+          .from(renderArea)
+          .set({
+            margin: 10,
+            filename: file.name.replace(".docx", ".pdf"),
+            image: { type: "jpeg", quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: {
+              unit: "mm",
+              format: "a4",
+              orientation: "portrait"
+            }
+          })
+          .outputPdf("blob");
+
+        console.log('generated pdfBlob size:', pdfBlob && pdfBlob.size);
+
+        // Convert blob to arrayBuffer
+        const pdfBytes = await pdfBlob.arrayBuffer();
+
+        // Load PDF
+        const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+
+        // Copy pages into merged PDF
+        const copiedPages = await mergedPdf.copyPages(
+          pdfDoc,
+          pdfDoc.getPageIndices()
+        );
+
+        copiedPages.forEach((page) => {
+          mergedPdf.addPage(page);
+        });
+
+      } catch (err) {
+        console.error(err);
+        status.innerText += `\nError processing ${file.name}`;
+      }
+    }
+
+    // Save merged PDF
+    const mergedPdfBytes = await mergedPdf.save();
+
+    // Download merged PDF
+    const blob = new Blob([mergedPdfBytes], {
+      type: "application/pdf"
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "merged-document.pdf";
+    a.click();
+
+    URL.revokeObjectURL(url);
+
+    status.innerText += "\n\nMerged PDF downloaded successfully.";
+  }
+</script>
+
+</body>
+</html>
