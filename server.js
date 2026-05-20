@@ -7,22 +7,23 @@ const { PDFDocument } = require("pdf-lib");
 
 const app = express();
 
-// Ensure required directories exist before use
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const OUTPUT_DIR = path.join(__dirname, 'output');
+
 function ensureDirectory(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
 
-ensureDirectory(path.join(__dirname, 'uploads'));
-ensureDirectory(path.join(__dirname, 'output'));
+ensureDirectory(UPLOAD_DIR);
+ensureDirectory(OUTPUT_DIR);
 
-app.use(express.static("public"));
-// Serve output files for download
-app.use('/output', express.static('output'));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/output', express.static(OUTPUT_DIR));
 
 const upload = multer({
-  dest: "uploads/"
+  dest: UPLOAD_DIR
 });
 
 function convertToPdf(buffer) {
@@ -156,7 +157,7 @@ app.post("/convert", upload.array("files"), (req, res) => {
 
       // save merged PDF to output folder
       const mergedBytes = await mergedPdf.save();
-      const outPath = path.join('output', `${id}.pdf`);
+      const outPath = path.join(OUTPUT_DIR, `${id}.pdf`);
       fs.writeFileSync(outPath, Buffer.from(mergedBytes));
 
       jobs[id].status = 'done';
@@ -164,7 +165,7 @@ app.post("/convert", upload.array("files"), (req, res) => {
       jobs[id].phase = 'done';
       jobs[id].phaseProgress = 100;
       jobs[id].message = 'Completed';
-      jobs[id].resultPath = `/output/${id}.pdf`;
+      jobs[id].resultPath = `/download/${id}`;
 
     } catch (err) {
       console.error('Job error', err);
@@ -199,7 +200,19 @@ app.get('/result/:id', (req, res) => {
   if (!job) return res.status(404).send('Job not found');
   if (job.status !== 'done') return res.status(400).send('Job not completed');
 
-  const p = path.join(__dirname, 'output', `${id}.pdf`);
+  const p = path.join(OUTPUT_DIR, `${id}.pdf`);
+  if (!fs.existsSync(p)) return res.status(404).send('Result not found');
+  res.download(p, 'merged.pdf');
+});
+
+// Direct download endpoint
+app.get('/download/:id', (req, res) => {
+  const id = req.params.id;
+  const job = jobs[id];
+  if (!job) return res.status(404).send('Job not found');
+  if (job.status !== 'done') return res.status(400).send('Job not completed');
+
+  const p = path.join(OUTPUT_DIR, `${id}.pdf`);
   if (!fs.existsSync(p)) return res.status(404).send('Result not found');
   res.download(p, 'merged.pdf');
 });

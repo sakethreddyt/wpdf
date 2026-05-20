@@ -129,7 +129,10 @@ async function uploadFiles() {
           progressBar.style.width = '100%';
           progressBar.innerText = '100%';
           progressMessage.innerText = 'Completed';
-          downloadDiv.innerHTML = `<a href="${js.result}" target="_blank">Download merged PDF</a>`;
+          downloadDiv.innerHTML = `
+            <a href="${js.result}" target="_blank" download="merged.pdf">Download merged PDF</a>
+            <button onclick="window.location='${js.result}'" style="margin-left:12px;padding:10px 16px;">Download Now</button>
+          `;
         } else if (js.status === 'error') {
           clearInterval(poll);
           progressMessage.innerText = 'Error: ' + (js.error || js.message || 'Unknown');
